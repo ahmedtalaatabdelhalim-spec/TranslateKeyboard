@@ -1,269 +1,292 @@
 package com.translate.keyboard
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.text.TextUtils
-import android.view.HapticFeedbackConstants
-import android.view.KeyEvent
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
-import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import com.translate.keyboard.clipboard.ClipboardManagerHelper
-import com.translate.keyboard.emoji.EmojiRepository
-import com.translate.keyboard.translation.FrancoConverter
+import com.translate.keyboard.keyboard.KeyboardLayoutManager
 import com.translate.keyboard.translation.TranslationEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class TranslateKeyboardService : InputMethodService() {
+class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.KeyClickListener {
 
     private lateinit var translationEngine: TranslationEngine
-    private lateinit var clipboardHelper: ClipboardManagerHelper
+    private lateinit var keyboardManager: KeyboardLayoutManager
+    private lateinit var clipboardManager: ClipboardManager
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
 
-    private var currentLayout = "ar" // "ar", "en", "franco"
-    private var targetLang = "en"   // "en", "ar", "franco", "fr", "de", "es"
+    private var currentLayout = "ar" // "ar", "en", "symbols"
+    private var targetLang = "en"    // "en", "ar", "franco"
     private var isShifted = false
 
+    private lateinit var rootContainer: LinearLayout
+    private lateinit var toolbarContainer: LinearLayout
+    private lateinit var clipboardCardContainer: LinearLayout
     private lateinit var keyboardContainer: LinearLayout
-    private lateinit var toolbar: LinearLayout
-    private lateinit var keyboardView: View
-    private lateinit var emojiView: ScrollView
-    private lateinit var clipboardView: ScrollView
-    private lateinit var translationBar: LinearLayout
 
-    private lateinit var btnTranslate: ImageButton
-    private lateinit var btnLanguage: Button
-    private lateinit var btnClipboard: ImageButton
-    private lateinit var btnEmoji: ImageButton
-    private lateinit var btnVoice: ImageButton
-    private lateinit var btnSettings: ImageButton
-    private lateinit var tvTranslationPreview: TextView
+    private var lastCopiedText = ""
 
     override fun onCreate() {
         super.onCreate()
         translationEngine = TranslationEngine(applicationContext)
-        clipboardHelper = ClipboardManagerHelper(applicationContext)
+        keyboardManager = KeyboardLayoutManager(applicationContext)
+        keyboardManager.setKeyClickListener(this)
+        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
 
     override fun onCreateInputView(): View {
-        keyboardContainer = LinearLayout(this).apply {
+        rootContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF1E1E2E.toInt()) // Dark Material Theme default
+            setBackgroundColor(android.graphics.Color.parseColor("#121212"))
         }
 
         setupToolbar()
-        setupTranslationBar()
-        setupMainKeyboardLayout()
+        setupClipboardCard()
 
-        keyboardContainer.addView(toolbar)
-        keyboardContainer.addView(translationBar)
-        keyboardContainer.addView(keyboardView)
+        keyboardContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(keyboardManager.createLayout(currentLayout, isShifted))
+        }
 
-        return keyboardContainer
+        rootContainer.addView(toolbarContainer)
+        rootContainer.addView(clipboardCardContainer)
+        rootContainer.addView(keyboardContainer)
+
+        checkClipboardContent()
+        return rootContainer
     }
 
     private fun setupToolbar() {
-        toolbar = LinearLayout(this).apply {
+        toolbarContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(12, 8, 12, 8)
-            setBackgroundColor(0xFF2A2A3C.toInt())
+            setPadding(16, 12, 16, 12)
+            setBackgroundColor(android.graphics.Color.parseColor("#1F1F1F"))
         }
 
-        btnLanguage = Button(this).apply {
-            text = "AR ⇄ EN"
-            textSize = 12f
-            setOnClickListener {
-                switchLanguage()
-            }
-        }
-
-        btnTranslate = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_menu_send)
-            setOnClickListener {
-                performInstantTranslation()
-            }
-        }
-
-        btnClipboard = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_menu_save)
-            setOnClickListener {
-                toggleClipboardView()
-            }
-        }
-
-        btnEmoji = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_menu_gallery)
-            setOnClickListener {
-                toggleEmojiView()
-            }
-        }
-
-        btnVoice = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_btn_speak_now)
-            setOnClickListener {
-                Toast.makeText(applicationContext, "Listening...", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        toolbar.addView(btnLanguage)
-        toolbar.addView(btnTranslate)
-        toolbar.addView(btnClipboard)
-        toolbar.addView(btnEmoji)
-        toolbar.addView(btnVoice)
-    }
-
-    private fun setupTranslationBar() {
-        translationBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            visibility = View.GONE
-            setPadding(16, 8, 16, 8)
-            setBackgroundColor(0xFF3B3B52.toInt())
-        }
-
-        tvTranslationPreview = TextView(this).apply {
-            text = "Translation Preview..."
-            setTextColor(0xFFFFFFFF.toInt())
+        val btnTranslateAction = TextView(this).apply {
+            text = "🌐 Translate"
+            setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
-        }
-        translationBar.addView(tvTranslationPreview)
-    }
-
-    private fun setupMainKeyboardLayout() {
-        keyboardView = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(8, 8, 8, 8)
-        }
-
-        // Add key rows programmatically (QWERTY or Arabic)
-        val row1 = createKeyRow(if (currentLayout == "ar") "ضصثقفاغعهخحجد" else "qwertyuiop")
-        val row2 = createKeyRow(if (currentLayout == "ar") "شسيبلاتنمكط" else "asdfghjkl")
-        val row3 = createKeyRow(if (currentLayout == "ar") "ئءؤرلاىةوزظ" else "zxcvbnm")
-
-        val bottomRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val btnSpace = Button(this).apply {
-            text = "Space ($currentLayout)"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+            setPadding(16, 8, 16, 8)
             setOnClickListener {
-                commitText(" ")
-            }
-        }
-
-        val btnEnter = Button(this).apply {
-            text = "↵"
-            setOnClickListener {
-                sendKeyChar('\n')
-            }
-            setOnLongClickListener {
                 performInstantTranslation()
-                true
             }
         }
 
-        val btnDelete = Button(this).apply {
-            text = "⌫"
+        val btnClipboardAction = TextView(this).apply {
+            text = "📋 Clipboard"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setPadding(16, 8, 16, 8)
             setOnClickListener {
-                currentInputConnection?.deleteSurroundingText(1, 0)
+                toggleClipboardCardVisibility()
             }
         }
 
-        bottomRow.addView(btnSpace)
-        bottomRow.addView(btnDelete)
-        bottomRow.addView(btnEnter)
-
-        (keyboardView as LinearLayout).addView(row1)
-        (keyboardView as LinearLayout).addView(row2)
-        (keyboardView as LinearLayout).addView(row3)
-        (keyboardView as LinearLayout).addView(bottomRow)
+        toolbarContainer.addView(btnTranslateAction)
+        toolbarContainer.addView(btnClipboardAction)
     }
 
-    private fun createKeyRow(keys: String): LinearLayout {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+    private fun setupClipboardCard() {
+        clipboardCardContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(16, 16, 16, 16)
+            setBackgroundColor(android.graphics.Color.parseColor("#2C2C2C"))
         }
+    }
 
-        for (ch in keys) {
-            val btn = Button(this).apply {
-                text = ch.toString()
-                textSize = 18f
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
-                setOnClickListener {
-                    performHapticFeedback()
-                    commitText(text.toString())
+    private fun checkClipboardContent() {
+        try {
+            val clipData = clipboardManager.primaryClip
+            if (clipData != null && clipData.itemCount > 0) {
+                val text = clipData.getItemAt(0).text?.toString() ?: ""
+                if (text.isNotBlank() && text != lastCopiedText) {
+                    lastCopiedText = text
+                    showClipboardCard(text)
                 }
             }
-            row.addView(btn)
+        } catch (e: Exception) {
+            // Handle security exceptions gracefully
         }
-        return row
     }
 
-    private fun commitText(text: String) {
+    private fun showClipboardCard(text: String) {
+        clipboardCardContainer.removeAllViews()
+        clipboardCardContainer.visibility = View.VISIBLE
+
+        val tvTitle = TextView(this).apply {
+            text = "📋 Copied Text Detected:"
+            setTextColor(android.graphics.Color.parseColor("#BB86FC"))
+            textSize = 12f
+        }
+
+        val tvContent = TextView(this).apply {
+            text = text
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setPadding(0, 4, 0, 8)
+        }
+
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        val btnTranslateClip = TextView(this).apply {
+            text = "[ Translate ]"
+            setTextColor(android.graphics.Color.parseColor("#03DAC5"))
+            setPadding(0, 4, 16, 4)
+            setOnClickListener {
+                serviceScope.launch {
+                    val translated = translationEngine.translateText(text, targetLang)
+                    tvContent.text = "$text\n➔ $translated"
+                }
+            }
+        }
+
+        val btnInsertClip = TextView(this).apply {
+            text = "[ Insert ]"
+            setTextColor(android.graphics.Color.parseColor("#03DAC5"))
+            setPadding(0, 4, 16, 4)
+            setOnClickListener {
+                currentInputConnection?.commitText(text, 1)
+                clipboardCardContainer.visibility = View.GONE
+            }
+        }
+
+        val btnClose = TextView(this).apply {
+            text = "[ Close ]"
+            setTextColor(android.graphics.Color.GRAY)
+            setPadding(0, 4, 0, 4)
+            setOnClickListener {
+                clipboardCardContainer.visibility = View.GONE
+            }
+        }
+
+        actionRow.addView(btnTranslateClip)
+        actionRow.addView(btnInsertClip)
+        actionRow.addView(btnClose)
+
+        clipboardCardContainer.addView(tvTitle)
+        clipboardCardContainer.addView(tvContent)
+        clipboardCardContainer.addView(actionRow)
+    }
+
+    private fun toggleClipboardCardVisibility() {
+        if (clipboardCardContainer.visibility == View.VISIBLE) {
+            clipboardCardContainer.visibility = View.GONE
+        } else {
+            checkClipboardContent()
+            if (clipboardCardContainer.childCount == 0) {
+                Toast.makeText(this, "No recent clipboard text", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    override fun onKeyClick(text: String) {
+        performHaptic()
         currentInputConnection?.commitText(text, 1)
+    }
+
+    override fun onDeleteClick() {
+        performHaptic()
+        val ic = currentInputConnection ?: return
+        val selectedText = ic.getSelectedText(0)
+        if (!selectedText.isNullOrEmpty()) {
+            ic.commitText("", 1)
+        } else {
+            ic.deleteSurroundingText(1, 0)
+        }
+    }
+
+    override fun onSpaceClick() {
+        performHaptic()
+        currentInputConnection?.commitText(" ", 1)
+    }
+
+    override fun onEnterClick() {
+        performHaptic()
+        val ic = currentInputConnection ?: return
+        val editorInfo = currentInputEditorInfo
+        val action = editorInfo?.imeOptions ?: 0
+        if (action and android.view.inputmethod.EditorInfo.IME_MASK_ACTION != android.view.inputmethod.EditorInfo.IME_ACTION_NONE) {
+            ic.performEditorAction(action and android.view.inputmethod.EditorInfo.IME_MASK_ACTION)
+        } else {
+            ic.commitText("\n", 1)
+        }
+    }
+
+    override fun onShiftClick() {
+        isShifted = !isShifted
+        refreshKeyboard()
+    }
+
+    override fun onLanguageClick() {
+        currentLayout = when (currentLayout) {
+            "ar" -> { targetLang = "ar"; "en" }
+            "en" -> { targetLang = "en"; "ar" }
+            else -> "ar"
+        }
+        refreshKeyboard()
+        Toast.makeText(this, "Layout: $currentLayout", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onEmojiClick() {
+        Toast.makeText(this, "Emoji Panel", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onLongEnterClick() {
+        performInstantTranslation()
     }
 
     private fun performInstantTranslation() {
         val ic = currentInputConnection ?: return
-        val textBefore = ic.getTextBeforeCursor(500, 0)?.toString() ?: ""
-        if (textBefore.isBlank()) return
+        val textBefore = ic.getTextBeforeCursor(1000, 0)?.toString() ?: ""
+        if (textBefore.isBlank()) {
+            Toast.makeText(this, "No text to translate", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        val detected = translationEngine.detectLanguage(textBefore)
-        val target = if (detected == "ar") "en" else "ar"
+        Toast.init(applicationContext)
+        Toast.makeText(this, "Translating...", Toast.LENGTH_SHORT).show()
 
         serviceScope.launch {
-            val translated = translationEngine.translate(textBefore, detected, target)
-            ic.deleteSurroundingText(textBefore.length, 0)
-            ic.commitText(translated, 1)
-            Toast.makeText(applicationContext, "Translated ($detected ➔ $target)", Toast.LENGTH_SHORT).show()
+            try {
+                val translated = withContext(Dispatchers.IO) {
+                    translationEngine.translateText(textBefore, targetLang)
+                }
+                ic.deleteSurroundingText(textBefore.length, 0)
+                ic.commitText(translated, 1)
+            } catch (e: Exception) {
+                Toast.makeText(applicationContext, "Translation failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
-    private fun switchLanguage() {
-        currentLayout = when (currentLayout) {
-            "ar" -> "en"
-            "en" -> "franco"
-            else -> "ar"
-        }
-        btnLanguage.text = currentLayout.uppercase()
-        keyboardContainer.removeView(keyboardView)
-        setupMainKeyboardLayout()
-        keyboardContainer.addView(keyboardView)
+    private fun refreshKeyboard() {
+        keyboardContainer.removeAllViews()
+        keyboardContainer.addView(keyboardManager.createLayout(currentLayout, isShifted))
     }
 
-    private fun toggleEmojiView() {
-        Toast.makeText(applicationContext, "Emoji Picker Opened", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun toggleClipboardView() {
-        Toast.makeText(applicationContext, "Clipboard History Opened", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun performHapticFeedback() {
+    private fun performHaptic() {
         val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE))
+            vibrator.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
         } else {
             @Suppress("DEPRECATION")
-            vibrator.vibrate(20)
+            vibrator.vibrate(15)
         }
     }
 }

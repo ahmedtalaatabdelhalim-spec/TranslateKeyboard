@@ -1,59 +1,37 @@
 package com.translate.keyboard.translation
 
 import android.content.Context
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.util.Locale
 
-class TranslationEngine(private val context: Context) {
+class TranslationEngine(context: Context) {
+    // API key should be injected or read from secure config
+    // For build-readiness, we use a placeholder that the provider handles gracefully
+    private val provider: TranslationProvider = GoogleCloudTranslationProvider("YOUR_API_KEY")
 
-    suspend fun translate(text: String, sourceLang: String, targetLang: String): String = withContext(Dispatchers.IO) {
-        if (text.isBlank()) return@withContext ""
+    suspend fun translateText(text: String, targetLang: String): String {
+        if (text.isBlank()) return ""
 
-        // Handle Franco conversions locally
-        if (sourceLang == "franco" && targetLang == "ar") {
-            return@withContext FrancoConverter.francoToArabic(text)
+        val sourceLang = detectLanguage(text)
+
+        // Special handling for Franco
+        if (sourceLang == "franco") {
+            val arabicText = FrancoConverter.francoToArabic(text)
+            if (targetLang == "ar") return arabicText
+            // If target is English, translate the Arabic result
+            val result = provider.translate(arabicText, "ar", targetLang)
+            return if (result.isSuccess) result.translatedText else arabicText
         }
-        if (sourceLang == "ar" && targetLang == "franco") {
-            return@withContext FrancoConverter.arabicToFranco(text)
+
+        if (targetLang == "franco" && sourceLang == "ar") {
+            return FrancoConverter.arabicToFranco(text)
         }
 
-        // Mock / Smart Fallback Translation simulation for production reliability when offline or without key
-        // In full deployment, connects to translation backend / secure proxy API.
-        try {
-            // Simulated instant neural translation
-            simulateApiTranslation(text, sourceLang, targetLang)
-        } catch (e: Exception) {
-            "Translation error: ${e.localizedMessage}"
-        }
+        val result = provider.translate(text, sourceLang, targetLang)
+        return if (result.isSuccess) result.translatedText else text
     }
 
-    private fun simulateApiTranslation(text: String, source: String, target: String): String {
-        // Basic dictionary match or heuristic for offline & testing
-        val lower = text.lowercase(Locale.ROOT)
-        if (source == "ar" && target == "en") {
-            return when {
-                lower.contains("إزيك") || lower.contains("ازيك") || lower.contains("عامل إيه") -> "How are you?"
-                lower.contains("السلام عليكم") -> "Peace be upon you"
-                lower.contains("شكرا") -> "Thank you"
-                lower.contains("صباح الخير") -> "Good morning"
-                lower.contains("مع السلامة") -> "Goodbye"
-                else -> "Translated ($target): $text"
-            }
-        } else if (source == "en" && target == "ar") {
-            return when {
-                lower.contains("how are you") -> "إزيك عامل إيه؟"
-                lower.contains("thank you") -> "شكراً لك"
-                lower.contains("good morning") -> "صباح الخير"
-                else -> "مترجم ($target): $text"
-            }
-        }
-        return "[$target] $text"
-    }
-
-    fun detectLanguage(text: String): String {
+    suspend fun detectLanguage(text: String): String {
         if (FrancoConverter.isFranco(text)) return "franco"
         if (text.any { it in '؀'..'ۿ' }) return "ar"
-        return "en"
+        return provider.detectLanguage(text)
     }
 }
