@@ -259,7 +259,6 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
             return
         }
 
-        Toast.init(applicationContext)
         Toast.makeText(this, "Translating...", Toast.LENGTH_SHORT).show()
 
         serviceScope.launch {
