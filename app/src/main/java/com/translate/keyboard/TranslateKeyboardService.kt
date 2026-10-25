@@ -22,9 +22,9 @@ import kotlinx.coroutines.withContext
 
 class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.KeyClickListener {
 
-    private lateinit var translationEngine: TranslationEngine
-    private lateinit var keyboardManager: KeyboardLayoutManager
-    private lateinit var clipboardManager: ClipboardManager
+    private lateinit var appTranslationEngine: TranslationEngine
+    private lateinit var appKeyboardManager: KeyboardLayoutManager
+    private lateinit var appClipboardManager: ClipboardManager
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
 
     private var currentLayout = "ar" // "ar", "en", "symbols"
@@ -40,10 +40,10 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
     override fun onCreate() {
         super.onCreate()
-        translationEngine = TranslationEngine(applicationContext)
-        keyboardManager = KeyboardLayoutManager(applicationContext)
-        keyboardManager.setKeyClickListener(this)
-        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        appTranslationEngine = TranslationEngine(applicationContext)
+        appKeyboardManager = KeyboardLayoutManager(applicationContext)
+        appKeyboardManager.setKeyClickListener(this)
+        appClipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
 
     override fun onCreateInputView(): View {
@@ -57,7 +57,7 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
         keyboardContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(keyboardManager.createLayout(currentLayout, isShifted))
+            addView(appKeyboardManager.createLayout(currentLayout, isShifted))
         }
 
         rootContainer.addView(toolbarContainer)
@@ -110,7 +110,7 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
     private fun checkClipboardContent() {
         try {
-            val clipData = clipboardManager.primaryClip
+            val clipData = appClipboardManager.primaryClip
             if (clipData != null && clipData.itemCount > 0) {
                 val text = clipData.getItemAt(0).text?.toString() ?: ""
                 if (text.isNotBlank() && text != lastCopiedText) {
@@ -123,7 +123,7 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
         }
     }
 
-    private fun showClipboardCard(text: String) {
+    private fun showClipboardCard(copiedText: String) {
         clipboardCardContainer.removeAllViews()
         clipboardCardContainer.visibility = View.VISIBLE
 
@@ -134,7 +134,7 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
         }
 
         val tvContent = TextView(this).apply {
-            text = text
+            text = copiedText
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
             setPadding(0, 4, 0, 8)
@@ -150,8 +150,8 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
             setPadding(0, 4, 16, 4)
             setOnClickListener {
                 serviceScope.launch {
-                    val translated = translationEngine.translateText(text, targetLang)
-                    tvContent.text = "$text\n➔ $translated"
+                    val translated = appTranslationEngine.translateText(copiedText, targetLang)
+                    tvContent.text = "$copiedText\n➔ $translated"
                 }
             }
         }
@@ -161,10 +161,11 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
             setTextColor(android.graphics.Color.parseColor("#03DAC5"))
             setPadding(0, 4, 16, 4)
             setOnClickListener {
-                currentInputConnection?.commitText(text, 1)
+                currentInputConnection?.commitText(copiedText, 1)
                 clipboardCardContainer.visibility = View.GONE
             }
         }
+
 
         val btnClose = TextView(this).apply {
             text = "[ Close ]"
@@ -264,7 +265,7 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
         serviceScope.launch {
             try {
                 val translated = withContext(Dispatchers.IO) {
-                    translationEngine.translateText(textBefore, targetLang)
+                    appTranslationEngine.translateText(textBefore, targetLang)
                 }
                 ic.deleteSurroundingText(textBefore.length, 0)
                 ic.commitText(translated, 1)
@@ -276,7 +277,7 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
     private fun refreshKeyboard() {
         keyboardContainer.removeAllViews()
-        keyboardContainer.addView(keyboardManager.createLayout(currentLayout, isShifted))
+        keyboardContainer.addView(appKeyboardManager.createLayout(currentLayout, isShifted))
     }
 
     private fun performHaptic() {
