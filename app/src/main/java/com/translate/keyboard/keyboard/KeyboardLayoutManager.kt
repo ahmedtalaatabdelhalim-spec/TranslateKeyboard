@@ -2,7 +2,6 @@ package com.translate.keyboard.keyboard
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
@@ -10,11 +9,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
-
 import com.translate.keyboard.utils.SettingsManager
 import com.translate.keyboard.utils.ThemeColors
-import com.translate.keyboard.utils.ThemeManager
 
 class KeyboardLayoutManager(
     private val context: Context,
@@ -36,6 +34,48 @@ class KeyboardLayoutManager(
     private var listener: KeyClickListener? = null
     fun setKeyClickListener(l: KeyClickListener) { listener = l }
 
+    private var previewPopup: PopupWindow? = null
+    private var previewTextView: TextView? = null
+
+    init {
+        setupPreviewPopup()
+    }
+
+    private fun setupPreviewPopup() {
+        previewTextView = TextView(context).apply {
+            textSize = 28f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundDrawable(GradientDrawable().apply {
+                setColor(Color.parseColor("#333333"))
+                cornerRadius = 16f
+            })
+            setPadding(24, 12, 24, 12)
+        }
+        previewPopup = PopupWindow(previewTextView, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            isTouchable = false
+        }
+    }
+
+    private fun showPreview(anchor: View, text: String) {
+        if (!settings.isPopupPreviewEnabled() || text.length > 2) return
+        previewTextView?.text = text
+        val location = IntArray(2)
+        anchor.getLocationOnScreen(location)
+        previewPopup?.showAtLocation(
+            anchor,
+            Gravity.NO_GRAVITY,
+            location[0] + (anchor.width / 4),
+            location[1] - 140
+        )
+    }
+
+    private fun dismissPreview() {
+        if (previewPopup?.isShowing == true) {
+            previewPopup?.dismiss()
+        }
+    }
+
     fun createLayout(type: String, isShifted: Boolean = false): View {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -43,113 +83,204 @@ class KeyboardLayoutManager(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            setPadding(4, 4, 4, 4)
+            setPadding(4, 6, 4, 6)
             setBackgroundColor(theme.backgroundColor)
         }
 
-        val keys = when (type) {
-            "ar" -> listOf(
-                "ضصثقفاغعهخحجد",
-                "شسيبلاتنمكط",
-                "ئءؤرلاىةوزظ"
-            )
-            "en" -> {
-                val row1 = if (isShifted) "QWERTYUIOP" else "qwertyuiop"
-                val row2 = if (isShifted) "ASDFGHJKL" else "asdfghjkl"
-                val row3 = if (isShifted) "ZXCVBNM" else "zxcvbnm"
-                listOf(row1, row2, row3)
+        when (type) {
+            "ar" -> {
+                // Row 1: Numbers
+                root.addView(createRow("١٢٣٤٥٦٧٨٩٠"))
+                // Row 2: Letters
+                root.addView(createRow("ضصثقفغعهخحج"))
+                // Row 3: Letters
+                root.addView(createRow("شسيبلاتنمكط"))
+                // Row 4: Letters + Backspace on the right
+                root.addView(createRowWithBackspace("ذئؤرىةوزظد"))
+                // Row 5: Bottom functional row
+                root.addView(createArabicBottomRow())
             }
-            "symbols" -> listOf(
-                "1234567890",
-                "@#$%&*-+()",
-                "!\"':;/?~_ "
-            )
-            else -> listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
-        }
+            "en" -> {
+                val r1 = if (isShifted) "QWERTYUIOP" else "qwertyuiop"
+                val r2 = if (isShifted) "ASDFGHJKL" else "asdfghjkl"
+                val r3 = if (isShifted) "ZXCVBNM" else "zxcvbnm"
 
-        for (i in keys.indices) {
-            val row = createRow(keys[i], type, i == 2, isShifted)
-            root.addView(row)
+                root.addView(createRow(r1))
+                root.addView(createRow(r2))
+                root.addView(createRowWithSpecial(r3, "⇧", "⌫"))
+                root.addView(createStandardBottomRow())
+            }
+            "symbols" -> {
+                root.addView(createRow("1234567890"))
+                root.addView(createRow("@#$%&*-+()"))
+                root.addView(createRowWithSpecial("!\"':;/?~_", "ABC", "⌫"))
+                root.addView(createStandardBottomRow())
+            }
+            else -> {
+                root.addView(createRow("qwertyuiop"))
+                root.addView(createRow("asdfghjkl"))
+                root.addView(createRow("zxcvbnm"))
+                root.addView(createStandardBottomRow())
+            }
         }
-
-        root.addView(createBottomRow(type))
 
         return root
     }
 
-    private fun createRow(keys: String, type: String, isThirdRow: Boolean, isShifted: Boolean): LinearLayout {
-        val row = LinearLayout(context).apply {
+    private fun createRow(keys: String): LinearLayout {
+        return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
+            for (ch in keys) {
+                addView(createKeyButton(ch.toString()))
+            }
         }
-
-        if (isThirdRow && type == "en") {
-            row.addView(createSpecialKey("⇧", 1.2f) { listener?.onShiftClick() })
-        }
-
-        for (ch in keys) {
-            row.addView(createKey(ch.toString()))
-        }
-
-        if (isThirdRow) {
-            row.addView(createSpecialKey("⌫", 1.2f) { listener?.onDeleteClick() })
-        }
-
-        return row
     }
 
-    private fun createBottomRow(type: String): LinearLayout {
+    private fun createRowWithBackspace(keys: String): LinearLayout {
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            for (ch in keys) {
+                addView(createKeyButton(ch.toString()))
+            }
+            // Backspace on the far right
+            addView(createSpecialButton("⌫", 1.2f) { listener?.onDeleteClick() })
+        }
+    }
+
+    private fun createRowWithSpecial(keys: String, leftKey: String, rightKey: String): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(createSpecialButton(leftKey, 1.2f) {
+                if (leftKey == "⇧") listener?.onShiftClick()
+                else if (leftKey == "ABC") listener?.onLanguageClick()
+            })
+            for (ch in keys) {
+                addView(createKeyButton(ch.toString()))
+            }
+            addView(createSpecialButton(rightKey, 1.2f) {
+                if (rightKey == "⌫") listener?.onDeleteClick()
+            })
+        }
+    }
+
+    private fun createArabicBottomRow(): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
 
-            addView(createSpecialKey("?123", 1.5f) { /* Switch to symbols */ })
-            addView(createSpecialKey("🌐", 1.2f) { listener?.onLanguageClick() })
-            addView(createSpecialKey("😀", 1.2f) { listener?.onEmojiClick() })
+            // Numbers / Symbols switch
+            addView(createSpecialButton("؟١٢٣", 1.1f) { listener?.onLanguageClick() })
+            // Emoji
+            addView(createSpecialButton("😀", 0.9f) { listener?.onEmojiClick() })
+            // Microphone
+            addView(createSpecialButton("🎙", 0.9f) { /* voice */ })
+            // Left Arrow
+            addView(createSpecialButton("‹", 0.7f) { listener?.onKeyClick("‹") })
 
+            // Spacebar labeled "العربية"
             addView(Button(context).apply {
-                text = "Space"
-                layoutParams = LinearLayout.LayoutParams(0, 140, 4f).apply { setMargins(4, 8, 4, 8) }
-                background = createKeyBackground(theme.keyBackgroundColor)
+                text = "العربية"
+                layoutParams = LinearLayout.LayoutParams(0, 135, 3.5f).apply { setMargins(3, 4, 3, 4) }
+                background = createBackground(theme.keyBackgroundColor)
                 setTextColor(theme.textColor)
+                textSize = 16f
                 isAllCaps = false
                 setOnClickListener { listener?.onSpaceClick() }
             })
 
-            addView(createSpecialKey("↵", 1.5f, true) { listener?.onEnterClick() })
+            // Right Arrow (used for instant translation on long press)
+            addView(createSpecialButton("›", 0.7f, true) { listener?.onKeyClick("›") })
+
+            // Enter Button
+            addView(createSpecialButton("↵", 1.2f, true) { listener?.onEnterClick() })
         }
     }
 
-    private fun createKey(txt: String): View {
-        val btn = Button(context).apply {
-            text = txt
-            layoutParams = LinearLayout.LayoutParams(0, 140, 1f).apply { setMargins(4, 6, 4, 6) }
-            background = createKeyBackground(theme.keyBackgroundColor)
+    private fun createStandardBottomRow(): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+
+            addView(createSpecialButton("?123", 1.2f) { listener?.onLanguageClick() })
+            addView(createSpecialButton("🌐", 1.0f) { listener?.onLanguageClick() })
+            addView(createSpecialButton("😀", 1.0f) { listener?.onEmojiClick() })
+
+            addView(Button(context).apply {
+                text = "Space"
+                layoutParams = LinearLayout.LayoutParams(0, 135, 4.0f).apply { setMargins(3, 4, 3, 4) }
+                background = createBackground(theme.keyBackgroundColor)
+                setTextColor(theme.textColor)
+                textSize = 16f
+                isAllCaps = false
+                setOnClickListener { listener?.onSpaceClick() }
+            })
+
+            addView(createSpecialButton("↵", 1.2f, true) { listener?.onEnterClick() })
+        }
+    }
+
+    private fun createKeyButton(text: String): View {
+        return Button(context).apply {
+            this.text = text
+            layoutParams = LinearLayout.LayoutParams(0, 135, 1.0f).apply { setMargins(3, 4, 3, 4) }
+            background = createBackground(theme.keyBackgroundColor)
             setTextColor(theme.textColor)
-            textSize = 20f
+            textSize = 19f
             setPadding(0, 0, 0, 0)
             isAllCaps = false
-            setOnClickListener { listener?.onKeyClick(txt) }
+            setOnTouchListener { v, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        showPreview(v, text)
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        dismissPreview()
+                        listener?.onKeyClick(text)
+                        v.performClick()
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        dismissPreview()
+                    }
+                }
+                true
+            }
         }
-        return btn
     }
 
-    private fun createSpecialKey(txt: String, weight: Float, isEnter: Boolean = false, action: () -> Unit): View {
+    private fun createSpecialButton(text: String, weight: Float, isEnterOrAction: Boolean = false, action: () -> Unit): View {
         return Button(context).apply {
-            text = txt
-            layoutParams = LinearLayout.LayoutParams(0, 140, weight).apply { setMargins(4, 8, 4, 8) }
-            background = createKeyBackground(if (isEnter) theme.enterKeyBackgroundColor else theme.specialKeyBackgroundColor)
+            this.text = text
+            layoutParams = LinearLayout.LayoutParams(0, 135, weight).apply { setMargins(3, 4, 3, 4) }
+            background = createBackground(if (isEnterOrAction) theme.enterKeyBackgroundColor else theme.specialKeyBackgroundColor)
             setTextColor(theme.textColor)
-            textSize = 18f
+            textSize = 16f
+            setPadding(0, 0, 0, 0)
+            isAllCaps = false
             setOnClickListener { action() }
-            if (isEnter) {
+            if (isEnterOrAction) {
                 setOnLongClickListener {
                     listener?.onLongEnterClick()
                     true
@@ -158,10 +289,10 @@ class KeyboardLayoutManager(
         }
     }
 
-    private fun createKeyBackground(colorInt: Int): GradientDrawable {
+    private fun createBackground(colorInt: Int): GradientDrawable {
         return GradientDrawable().apply {
             setColor(colorInt)
-            cornerRadius = 16f
+            cornerRadius = 18f
         }
     }
 }
