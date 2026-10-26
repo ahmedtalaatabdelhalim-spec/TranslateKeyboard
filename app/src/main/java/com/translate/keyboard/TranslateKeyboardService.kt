@@ -20,11 +20,25 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import com.translate.keyboard.keyboard.EmojiKeyboardLayoutManager
+import com.translate.keyboard.utils.HapticManager
+import com.translate.keyboard.utils.SettingsManager
+import com.translate.keyboard.utils.SuggestionEngine
+import com.translate.keyboard.utils.ThemeColors
+import com.translate.keyboard.utils.ThemeManager
+import com.translate.keyboard.utils.VoiceTypingManager
+
 class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.KeyClickListener {
 
     private lateinit var appTranslationEngine: TranslationEngine
     private lateinit var appKeyboardManager: KeyboardLayoutManager
     private lateinit var appClipboardManager: ClipboardManager
+    private lateinit var settingsManager: SettingsManager
+    private lateinit var hapticManager: HapticManager
+    private lateinit var voiceTypingManager: VoiceTypingManager
+    private lateinit var suggestionEngine: SuggestionEngine
+    private lateinit var themeColors: ThemeColors
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
 
     private var currentLayout = "ar" // "ar", "en", "symbols"
@@ -40,19 +54,32 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
     override fun onCreate() {
         super.onCreate()
+        settingsManager = SettingsManager(applicationContext)
+        hapticManager = HapticManager(applicationContext, settingsManager)
         appTranslationEngine = TranslationEngine(applicationContext)
-        appKeyboardManager = KeyboardLayoutManager(applicationContext)
+        themeColors = ThemeManager.getThemeColors(settingsManager.getTheme())
+        appKeyboardManager = KeyboardLayoutManager(applicationContext, settingsManager, themeColors)
         appKeyboardManager.setKeyClickListener(this)
         appClipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        suggestionEngine = SuggestionEngine(applicationContext)
+        voiceTypingManager = VoiceTypingManager(applicationContext, { text ->
+            currentInputConnection?.commitText(text, 1)
+        }, { error ->
+            Toast.makeText(this, error, Toast.LENGTH_SHORT).show()
+        })
     }
+
+
+    private lateinit var suggestionsContainer: LinearLayout
 
     override fun onCreateInputView(): View {
         rootContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(android.graphics.Color.parseColor("#121212"))
+            setBackgroundColor(themeColors.backgroundColor)
         }
 
         setupToolbar()
+        setupSuggestionsBar()
         setupClipboardCard()
 
         keyboardContainer = LinearLayout(this).apply {
@@ -61,12 +88,62 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
         }
 
         rootContainer.addView(toolbarContainer)
+        rootContainer.addView(suggestionsContainer)
         rootContainer.addView(clipboardCardContainer)
         rootContainer.addView(keyboardContainer)
 
         checkClipboardContent()
         return rootContainer
     }
+
+    private fun setupSuggestionsBar() {
+        suggestionsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(8, 4, 8, 4)
+            setBackgroundColor(themeColors.toolbarBackgroundColor)
+            visibility = View.GONE
+        }
+    }
+
+    private fun updateSuggestions() {
+        val ic = currentInputConnection ?: return
+        val text = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
+        val suggestions = suggestionEngine.getSuggestions(text, currentLayout)
+
+        suggestionsContainer.removeAllViews()
+        if (suggestions.isEmpty()) {
+            suggestionsContainer.visibility = View.GONE
+            return
+        }
+
+        suggestionsContainer.visibility = View.VISIBLE
+        for (suggestion in suggestions) {
+            val tv = TextView(this).apply {
+                text = suggestion
+                setTextColor(themeColors.textColor)
+                setPadding(24, 12, 24, 12)
+                textSize = 16f
+                setOnClickListener {
+                    applySuggestion(suggestion)
+                }
+            }
+            suggestionsContainer.addView(tv)
+        }
+    }
+
+    private fun applySuggestion(suggestion: String) {
+        val ic = currentInputConnection ?: return
+        val text = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
+        val lastSpace = text.lastIndexOf(" ")
+        if (lastSpace != -1) {
+            ic.deleteSurroundingText(text.length - lastSpace - 1, 0)
+        } else {
+            ic.deleteSurroundingText(text.length, 0)
+        }
+        ic.commitText(suggestion + " ", 1)
+        updateSuggestions()
+    }
+
 
     private fun setupToolbar() {
         toolbarContainer = LinearLayout(this).apply {
@@ -95,8 +172,19 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
             }
         }
 
+        val btnVoiceAction = TextView(this).apply {
+            text = "🎤 Voice"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setPadding(16, 8, 16, 8)
+            setOnClickListener {
+                voiceTypingManager.startListening()
+            }
+        }
+
         toolbarContainer.addView(btnTranslateAction)
         toolbarContainer.addView(btnClipboardAction)
+        toolbarContainer.addView(btnVoiceAction)
     }
 
     private fun setupClipboardCard() {
@@ -197,12 +285,13 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
     }
 
     override fun onKeyClick(text: String) {
-        performHaptic()
+        hapticManager.performClick(rootContainer)
         currentInputConnection?.commitText(text, 1)
+        updateSuggestions()
     }
 
     override fun onDeleteClick() {
-        performHaptic()
+        hapticManager.performClick(rootContainer)
         val ic = currentInputConnection ?: return
         val selectedText = ic.getSelectedText(0)
         if (!selectedText.isNullOrEmpty()) {
@@ -210,15 +299,17 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
         } else {
             ic.deleteSurroundingText(1, 0)
         }
+        updateSuggestions()
     }
 
     override fun onSpaceClick() {
-        performHaptic()
+        hapticManager.performClick(rootContainer)
         currentInputConnection?.commitText(" ", 1)
+        updateSuggestions()
     }
 
     override fun onEnterClick() {
-        performHaptic()
+        hapticManager.performClick(rootContainer)
         val ic = currentInputConnection ?: return
         val editorInfo = currentInputEditorInfo
         val action = editorInfo?.imeOptions ?: 0
@@ -245,7 +336,15 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
     }
 
     override fun onEmojiClick() {
-        Toast.makeText(this, "Emoji Panel", Toast.LENGTH_SHORT).show()
+        hapticManager.performClick(rootContainer)
+        val emojiView = EmojiKeyboardLayoutManager(applicationContext, themeColors, { emoji ->
+            currentInputConnection?.commitText(emoji, 1)
+        }, {
+            refreshKeyboard()
+        }).createLayout()
+
+        keyboardContainer.removeAllViews()
+        keyboardContainer.addView(emojiView)
     }
 
     override fun onLongEnterClick() {
@@ -278,15 +377,5 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
     private fun refreshKeyboard() {
         keyboardContainer.removeAllViews()
         keyboardContainer.addView(appKeyboardManager.createLayout(currentLayout, isShifted))
-    }
-
-    private fun performHaptic() {
-        val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(15)
-        }
     }
 }

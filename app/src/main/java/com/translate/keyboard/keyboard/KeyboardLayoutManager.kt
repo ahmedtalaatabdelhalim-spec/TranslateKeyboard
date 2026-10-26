@@ -12,7 +12,15 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
-class KeyboardLayoutManager(private val context: Context) {
+import com.translate.keyboard.utils.SettingsManager
+import com.translate.keyboard.utils.ThemeColors
+import com.translate.keyboard.utils.ThemeManager
+
+class KeyboardLayoutManager(
+    private val context: Context,
+    private val settings: SettingsManager,
+    private val theme: ThemeColors
+) {
 
     interface KeyClickListener {
         fun onKeyClick(text: String)
@@ -36,7 +44,7 @@ class KeyboardLayoutManager(private val context: Context) {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             setPadding(4, 4, 4, 4)
-            setBackgroundColor(Color.parseColor("#121212")) // Dark Theme Base
+            setBackgroundColor(theme.backgroundColor)
         }
 
         val keys = when (type) {
@@ -109,8 +117,8 @@ class KeyboardLayoutManager(private val context: Context) {
             addView(Button(context).apply {
                 text = "Space"
                 layoutParams = LinearLayout.LayoutParams(0, 140, 4f).apply { setMargins(4, 8, 4, 8) }
-                background = createKeyBackground("#333333")
-                setTextColor(Color.WHITE)
+                background = createKeyBackground(theme.keyBackgroundColor)
+                setTextColor(theme.textColor)
                 isAllCaps = false
                 setOnClickListener { listener?.onSpaceClick() }
             })
@@ -123,8 +131,8 @@ class KeyboardLayoutManager(private val context: Context) {
         val btn = Button(context).apply {
             text = txt
             layoutParams = LinearLayout.LayoutParams(0, 140, 1f).apply { setMargins(4, 6, 4, 6) }
-            background = createKeyBackground("#2A2A2A")
-            setTextColor(Color.WHITE)
+            background = createKeyBackground(theme.keyBackgroundColor)
+            setTextColor(theme.textColor)
             textSize = 20f
             setPadding(0, 0, 0, 0)
             isAllCaps = false
@@ -137,8 +145,8 @@ class KeyboardLayoutManager(private val context: Context) {
         return Button(context).apply {
             text = txt
             layoutParams = LinearLayout.LayoutParams(0, 140, weight).apply { setMargins(4, 8, 4, 8) }
-            background = createKeyBackground(if (isEnter) "#6200EE" else "#3A3A3A")
-            setTextColor(Color.WHITE)
+            background = createKeyBackground(if (isEnter) theme.enterKeyBackgroundColor else theme.specialKeyBackgroundColor)
+            setTextColor(theme.textColor)
             textSize = 18f
             setOnClickListener { action() }
             if (isEnter) {
@@ -150,9 +158,9 @@ class KeyboardLayoutManager(private val context: Context) {
         }
     }
 
-    private fun createKeyBackground(color: String): GradientDrawable {
+    private fun createKeyBackground(colorInt: Int): GradientDrawable {
         return GradientDrawable().apply {
-            setColor(Color.parseColor(color))
+            setColor(colorInt)
             cornerRadius = 16f
         }
     }
