@@ -107,8 +107,8 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
     private fun updateSuggestions() {
         val ic = currentInputConnection ?: return
-        val text = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
-        val suggestions = suggestionEngine.getSuggestions(text, currentLayout)
+        val beforeCursor = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
+        val suggestions = suggestionEngine.getSuggestions(beforeCursor, currentLayout)
 
         suggestionsContainer.removeAllViews()
         if (suggestions.isEmpty()) {
@@ -133,12 +133,12 @@ class TranslateKeyboardService : InputMethodService(), KeyboardLayoutManager.Key
 
     private fun applySuggestion(suggestion: String) {
         val ic = currentInputConnection ?: return
-        val text = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
-        val lastSpace = text.lastIndexOf(" ")
+        val beforeCursor = ic.getTextBeforeCursor(50, 0)?.toString() ?: ""
+        val lastSpace = beforeCursor.lastIndexOf(" ")
         if (lastSpace != -1) {
-            ic.deleteSurroundingText(text.length - lastSpace - 1, 0)
+            ic.deleteSurroundingText(beforeCursor.length - lastSpace - 1, 0)
         } else {
-            ic.deleteSurroundingText(text.length, 0)
+            ic.deleteSurroundingText(beforeCursor.length, 0)
         }
         ic.commitText(suggestion + " ", 1)
         updateSuggestions()
